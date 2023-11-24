@@ -34,8 +34,8 @@ struct dh_keypair {
 struct dh_ctx {
     /* 0 is client, 1 is server */
     struct dh_keypair keypair[2];
-    bignum generator;
-    bignum modulus;
+    bignum generator;   // g
+    bignum modulus;     // p
 };
 
 static bignum ssh_dh_generator;
@@ -590,7 +590,7 @@ static int dh_receive_reply(ssh_session session) {
     if (rc != SSH_OK) return rc;
 
     rc = dh_keypair_set_keys(crypto->dh_ctx, DH_SERVER_KEYPAIR, NULL,
-                             server_pubkey);
+                             server_pubkey);    // Set the public key of server.
     if (rc != SSH_OK) {
         bignum_safe_free(server_pubkey);
         return rc;
@@ -599,14 +599,20 @@ static int dh_receive_reply(ssh_session session) {
     /* Skip: check server public key */
     /* Waht should we do next? */
     // LAB: insert your code here.
+    // Compute shared secret K and session identifier H.
+    rc = dh_compute_shared_secret(crypto->dh_ctx, DH_CLIENT_KEYPAIR,
+                                  DH_SERVER_KEYPAIR, &crypto->shared_secret);
+    if(rc != SSH_OK) return rc;
 
+    rc = dh_compute_session_id(session);
+    if(rc != SSH_OK) return rc;
 
     /* Skip: verifies signature on H (session id) */
 
-    rc = ssh_crypto_set_algo(session);
+    rc = ssh_crypto_set_algo(session);  // Set crypto algorithms.
     if (rc != SSH_OK) return rc;
 
-    rc = dh_gen_session_keys(session);
+    rc = dh_gen_session_keys(session);  // Set C2SIV, S2CIV...
     if (rc != SSH_OK) return rc;
 
     rc = ssh_buffer_add_u8(session->out_buffer, SSH_MSG_NEWKEYS);
@@ -636,11 +642,15 @@ static int dh_set_new_keys(ssh_session session) {
 
     /* NEWKEYS received, now its time to activate encryption */
     // LAB: insert your code here.
-
-
+    // Activate encryption. Change the current crypto struct to next_crypto.
+    SAFE_FREE(session->current_crypto);
+    session->current_crypto = crypto;
+    LOG_DEBUG("Encryption activated, current_crypto = %p", session->current_crypto);
+    session->current_crypto->used = SSH_DIRECTION_BOTH;
+    
     /* next_crypto should be deprecated from now if re-kex is not supportes */
     session->next_crypto = NULL;
-
+    
     return SSH_OK;
 }
 

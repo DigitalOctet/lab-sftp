@@ -81,6 +81,7 @@ void ssh_get_password(char *password) {
         password[i++] = c;
     }
     password[i] = '\0';
+    LOG_DEBUG("\nGet password: %s", password);
 
     /*resetting our old STDIN_FILENO*/
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
@@ -98,7 +99,7 @@ int ssh_userauth_password(ssh_session session, const char *password) {
     int rc;
     uint8_t type;
     static int cnt = 0;
-
+    LOG_INFO("Trying password authentication...");
     rc = ssh_buffer_pack(session->out_buffer, "bsssbs",
                          SSH_MSG_USERAUTH_REQUEST, session->opts.username,
                          "ssh-connection", "password", 0, password);
@@ -123,21 +124,54 @@ int ssh_userauth_password(ssh_session session, const char *password) {
         switch (type) {
             case SSH_MSG_USERAUTH_BANNER:
                 // LAB: insert your code here.
-
+                // Packet format:
+                // byte      SSH_MSG_USERAUTH_BANNER
+                // string    message in ISO-10646 UTF-8 encoding [RFC3629]
+                // string    language tag [RFC3066]
+                char *message, *language_tag;
+                rc = ssh_buffer_unpack(session->in_buffer, "ss", &message,
+                                       &language_tag);
+                if (rc != SSH_OK) goto error;
+                LOG_INFO("Message: %s", message);
+                LOG_INFO("Language tag: %s", language_tag);
+                break;
             case SSH_MSG_USERAUTH_SUCCESS:
                 // LAB: insert your code here.
-
+                LOG_NOTICE("Authentication success!");
+                return SSH_OK;
             case SSH_MSG_USERAUTH_PASSWD_CHANGEREQ:
+                LOG_INFO("Password change required!");
+                return SSH_ERROR;
             case SSH_MSG_USERAUTH_FAILURE:
                 // LAB: insert your code here.
+                // Packet format:
+                // byte         SSH_MSG_USERAUTH_FAILURE
+                // name-list    authentications that can continue
+                // boolean      partial success
 
+                // // Get name-list.
+                // char *auth_methods = NULL;
+                // rc = ssh_buffer_unpack(session->in_buffer, "s",
+                //                        &auth_methods);
+                // if (rc != SSH_OK) goto error;
+                // LOG_DEBUG("auth_methods: %s", auth_methods);
+
+                // // Get partial success.
+                // uint8_t partial_success;
+                // rc = ssh_buffer_unpack(session->in_buffer, "b", &partial_success);
+                // if (rc != SSH_OK) goto error;
+                // LOG_DEBUG("partial_success: %d", partial_success);
+                LOG_INFO("Permission denied, please try again.");
+                return SSH_AGAIN;
             default:
                 // LAB: insert your code here.
-
+                LOG_DEBUG("Unknown packet type %d", type);
+                break;
         }
     }
 
 error:
+    LOG_DEBUG("Error");
     ssh_buffer_reinit(session->out_buffer);
     return SSH_ERROR;
 }

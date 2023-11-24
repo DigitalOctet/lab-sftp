@@ -228,7 +228,8 @@ int ssh_packet_receive(ssh_session session) {
     size_t processed = 0; /* number of byte processed from the callback */
     struct ssh_crypto_struct *crypto = NULL;
     bool ok;
-
+    // if(session->current_crypto)
+    //     LOG_DEBUG("Cuurent crypto's used: %d", session->current_crypto->used);
     crypto = ssh_get_crypto(session, SSH_DIRECTION_IN);
     if (crypto != NULL) {
         current_macsize = hmac_digest_len(crypto->in_hmac);
@@ -239,6 +240,7 @@ int ssh_packet_receive(ssh_session session) {
     if (lenfield_blocksize == 0) {
         lenfield_blocksize = blocksize;
     }
+    // LOG_DEBUG("lenfield_blocksize: %d", lenfield_blocksize);
 
     data = calloc(lenfield_blocksize, sizeof(uint8_t));
 
@@ -263,6 +265,9 @@ int ssh_packet_receive(ssh_session session) {
     packet_len = packet_decrypt_len(session, ptr, data);
     to_be_read =
         packet_len - lenfield_blocksize + sizeof(uint32_t) + current_macsize;
+    // LOG_DEBUG("packet_len: %d", packet_len);
+    // LOG_DEBUG("to_be_read: %d", to_be_read);
+    // LOG_DEBUG("current_macsize: %d", current_macsize);
 
     data = realloc(data, to_be_read * sizeof(uint8_t) + 1);
     ssh_socket_read(session->socket, data, to_be_read);
@@ -280,8 +285,17 @@ int ssh_packet_receive(ssh_session session) {
         }
         /* verify MAC, see `packet_hmac_verify` */
         // LAB: insert your code here.
-
+        // LOG_DEBUG("Unencrypted packet: %p", ptr);
+        // ssh_log_hexdump("Unencrypted packet", ptr, to_be_read - current_macsize);
+        // LOG_DEBUG("In buffer: %p", session->in_buffer);
+        // ssh_log_hexdump("In buffer", ssh_buffer_get(session->in_buffer),
+        //                 packet_len);
+        // LOG_DEBUG("MAC type: %d", crypto->in_hmac);
+        rc = packet_hmac_verify(session, ssh_buffer_get(session->in_buffer), packet_len+4, mac,
+                                crypto->in_hmac);
+ 
         if (rc != SSH_OK) {
+            LOG_ERROR("MAC verification failed");
             ssh_set_error(SSH_FATAL, "hmac error");
             goto error;
         }
