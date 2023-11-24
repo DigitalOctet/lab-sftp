@@ -238,8 +238,17 @@ sftp_file sftp_open(sftp_session sftp, const char *filename, int flags,
     /* pack a new SFTP packet and send it using `sftp_packet_write` */
     // LAB: insert your code here.
     ssh_string ssh_filename = ssh_string_from_char(filename);
-    rc = ssh_buffer_pack(buffer, "dSdd", 
-                         id, ssh_filename, perm_flags, attr_flags);
+    if (attr_flags == SSH_FILEXFER_ATTR_PERMISSIONS) {
+        rc = ssh_buffer_pack(buffer, "dSddd", id, ssh_filename, perm_flags, 
+                             attr_flags, mode);
+    }
+    else {
+        LOG_CRITICAL("attrs %u not supported", attr_flags);
+        ssh_set_error(SSH_FATAL, "attribute error");
+        ssh_buffer_free(buffer);
+        ssh_string_free(ssh_filename);
+        return NULL;
+    }
     ssh_string_free(ssh_filename);
     if (rc != SSH_OK) {
         LOG_CRITICAL("can not pack buffer");
@@ -589,9 +598,9 @@ int32_t sftp_write(sftp_file file, const void *buf, uint32_t count) {
                 }
                 switch (status->status) {
                     case SSH_FX_OK:
-                        LOG_DEBUG("write %d byte to remote file", nsend);
-                        nleft -= nsend;
-                        file->offset += nsend;
+                        LOG_DEBUG("write %d byte to remote file", nwrite);
+                        nleft -= nwrite;
+                        file->offset += nwrite;
                         sftp_status_free(status);
                         break;
                     

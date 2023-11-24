@@ -558,6 +558,7 @@ int ssh_channel_read(ssh_channel channel, void *dest, uint32_t count) {
             ssh_buffer_get_data(buf, dest + nread, effectivelen);
             nread += effectivelen;
             count -= effectivelen;
+            LOG_DEBUG("read %d bytes from channel", effectivelen);
 
         } else {
             /* static buffer has insufficient data, read another
@@ -578,6 +579,7 @@ int ssh_channel_read(ssh_channel channel, void *dest, uint32_t count) {
                 case SSH_MSG_CHANNEL_WINDOW_ADJUST:
                     /* window adjust message could happen here */
                     // LAB: insert your code here.
+                    /* Adjust remote window and try receiving packet again. */
                     ssh_buffer_unpack(session->in_buffer, "d", &bytes_to_add);
                     LOG_NOTICE("remote window grows: +%d", bytes_to_add);
                     channel->remote_window += bytes_to_add;
@@ -614,12 +616,21 @@ int ssh_channel_read(ssh_channel channel, void *dest, uint32_t count) {
                         LOG_ERROR("cannot add data to buf");
                         goto error;
                     }
+                    else {
+                        LOG_DEBUG("add %lu bytes to buf", buf_len);
+                    }
                     ssh_string_free(channel_data);
+                    break;
 
                 case SSH_MSG_CHANNEL_EOF:
                     // LAB: insert your code here.
+                    /* We should return SSH_EOF here. But I found that 
+                       `sftp_packet_read` cannot deal with SSH_EOF correctly
+                       when reading packet length and type. In this case, 
+                       `buffer` is not filled and getting data from it will 
+                       cause a segmentation fault. */
                     channel->remote_eof = 1;
-                    return nread;
+                    return SSH_EOF;
 
                 case SSH_MSG_CHANNEL_CLOSE:
                     // LAB: insert your code here.
