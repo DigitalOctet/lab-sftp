@@ -167,6 +167,7 @@ int send_id_str(ssh_session session) {
     int rc = SSH_ERROR;
 
     session->client_id_str = strdup(id_str);
+    LOG_DEBUG("Client id str: %s", session->client_id_str);
     snprintf(buffer, sizeof(buffer), "%s%s", session->client_id_str,
              terminator);
 
@@ -197,7 +198,20 @@ int receive_id_str(ssh_session session) {
     for (int i = 0; i < 256; ++i) {
         ssh_socket_read(session->socket, &buffer[i], 1);
         // LAB: insert your code here.
+        // If buffer[i] is '\n', then we have received a possible id string.
+        // If buffer does not start with "SSH-", then we clear the buffer and keep reading.
 
+        if(buffer[i] == '\n' && buffer[i-1] == '\r') {
+            if(strncmp(buffer, "SSH-", 4) != 0) {
+                i = -1;
+                continue;
+            }
+            // Remove the terminator "\r\n" and store the id string in session->server_id_str.
+            buffer[i-1] = '\0';
+            session->server_id_str = strdup(buffer);
+            LOG_INFO("Server id str: %s", session->server_id_str);
+            return SSH_OK;
+        }
     }
     /* this line should not be reached */
     return SSH_ERROR;
@@ -292,6 +306,7 @@ int ssh_connect(ssh_session session) {
         LOG_ERROR("can not perform DH handshake");
         goto error;
     }
+    LOG_NOTICE("DH handshake succeed");
 
     /**
      * 2.4 Send user authentication request
