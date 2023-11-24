@@ -181,6 +181,7 @@ int main(int argc, char** argv) {
     rc = SSH_ERROR;
     while (rc != SSH_OK) {
         ssh_get_password(password);
+
         rc = ssh_userauth_password(session, password);
         switch (rc) {
             case SSH_OK:

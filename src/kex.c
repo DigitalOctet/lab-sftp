@@ -125,7 +125,7 @@ int ssh_send_kex(ssh_session session) {
     if (hashbufout_add_cookie(session) < 0) goto error;
 
     for (int i = 0; i < SSH_KEX_METHODS; ++i) {
-        str = ssh_string_from_char(kex->methods[i]);
+        str = ssh_string_from_char(kex->methods[i]);    // Get method name. Note: ssh_string starts with a 32-bit length field and then the actual data.
         if (ssh_buffer_add_ssh_string(session->out_hashbuf, str) < 0) {
             goto error;
         }
@@ -168,7 +168,7 @@ int ssh_receive_kex(ssh_session session) {
     rc = ssh_packet_receive(session);
     if (rc != SSH_OK) goto error;
 
-    ssh_buffer_get_u8(session->in_buffer, &msg_type);
+    ssh_buffer_get_u8(session->in_buffer, &msg_type); // Get msg type.
     if (msg_type != SSH_MSG_KEXINIT) {
         LOG_ERROR("wrong msg type: received %d expected %d", msg_type,
                   SSH_MSG_KEXINIT);
@@ -176,16 +176,30 @@ int ssh_receive_kex(ssh_session session) {
     }
 
     len = ssh_buffer_get_data(session->in_buffer,
-                              session->next_crypto->server_kex.cookie, 16);
+                              session->next_crypto->server_kex.cookie, 16); // Get cookie.
     if (len != 16) goto error;
 
     rc = hashbufin_add_cookie(session, session->next_crypto->server_kex.cookie);
     if (rc != SSH_OK) goto error;
 
+    // Get name-lists.
+    ssh_string name_list = NULL;
     for (int i = 0; i < SSH_KEX_METHODS; i++) {
         /* parse name-lists, don't forget to add `in_hashbuf` */
         // LAB: insert your code here.
+        // TODO: first_kex_packet_follows?
+        rc = ssh_buffer_unpack(session->in_buffer, "S", &name_list);
+        if (rc != SSH_OK) goto error;
 
+        strings[i] = ssh_string_to_char(name_list);
+
+        rc = ssh_buffer_pack(session->in_hashbuf, "S", name_list);
+        if (rc != SSH_OK){
+            ssh_string_free(name_list);
+            goto error;
+        }
+
+        ssh_string_free(name_list);
     }
 
     rc = ssh_buffer_unpack(session->in_buffer, "bd", &first_kex_follows,
@@ -198,6 +212,7 @@ int ssh_receive_kex(ssh_session session) {
         /* If server guesses Diffie Hellman Kex, this could block forever.
          * But if it guesses DH, it shouldn't set `first_kex_follows` to 1
          */
+        LOG_DEBUG("first kex follows");
         ssh_packet_receive(session);
     }
 
@@ -230,7 +245,16 @@ int ssh_select_kex(ssh_session session) {
     for (int i = 0; i < SSH_KEX_METHODS; ++i) {
         /* select negotiated algorithms and store them in `next_crypto->kex_methods` */
         // LAB: insert your code here.
-
+        if(strstr(server->methods[i], client->methods[i]) != NULL){
+            session->next_crypto->kex_methods[i] = strdup(client->methods[i]);
+            LOG_INFO("Select kex method %d: %s", i+1, session->next_crypto->kex_methods[i]);
+        }
+        else{
+            session->next_crypto->kex_methods[i] = NULL;
+            LOG_ERROR("No common kex method");
+            LOG_ERROR("Server kex method %d: %s", i+1, server->methods[i]);
+            LOG_ERROR("Client kex method %d: %s", i+1, client->methods[i]);
+        }
     }
     session->next_crypto->kex_type = SSH_KEX_DH_GROUP14_SHA256;
     return SSH_OK;
