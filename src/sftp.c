@@ -307,7 +307,7 @@ sftp_file sftp_open(sftp_session sftp, const char *filename, int flags,
                 ssh_set_error(SSH_FATAL, "cannot parse handle");
                 break;
             }
-            LOG_INFO("remote file opened");
+            LOG_NOTICE("remote file opened");
             return handle;
 
         default:
@@ -384,9 +384,9 @@ int sftp_close(sftp_file file) {
                 return SSH_ERROR;
             }
 
-            LOG_INFO("received status response - status code: %d, "
-                     "status message: %s", 
-                     status->status, status->errormsg);
+            LOG_NOTICE("received status response - status code: %d, "
+                       "status message: %s", 
+                       status->status, status->errormsg);
             rc = status->status == SSH_FX_OK ? SSH_NO_ERROR : SSH_ERROR;
             sftp_status_free(status);
             if (rc) {

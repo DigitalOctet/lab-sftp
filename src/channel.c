@@ -116,7 +116,11 @@ static int channel_open(ssh_channel channel, const char *type, uint32_t window,
                         recipient_channel, channel->local_channel);
                     return SSH_ERROR;
                 }
-                LOG_DEBUG("channel %d established", channel->local_channel);
+                LOG_NOTICE("local channel #%u to remote channel #%u "
+                           "established", 
+                           channel->local_channel, channel->remote_channel);
+                LOG_NOTICE("local window size = %u, remote window size = %u", 
+                           channel->local_window, channel->remote_window);
                 return SSH_OK;
 
             case SSH_MSG_CHANNEL_OPEN_FAILURE:
