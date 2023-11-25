@@ -12,4 +12,4 @@ Local window size was 64000, and remote window size was 0 when the channel was f
 
 ![CP6](./ckpt_6.png)
 
-The client connected to the localhost and successfully uploaded and downloaded `client.c`. We compared the downloaded and uploaded files with the original file using command `diff`. Empty outputs mean that these three file are exactly the same.
+The client connected to the localhost and successfully uploaded and downloaded `client.c`. We compared the downloaded and uploaded files with the original file using command `diff`. Empty outputs mean that these three files are exactly the same.
