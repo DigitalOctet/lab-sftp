@@ -47,7 +47,7 @@ int get_file(sftp_session sftp) {
 
     file = sftp_open(sftp, filename, O_RDONLY, 0);
     if (file == NULL) {
-        fprintf(stderr, "Can not open remote file %s", filename);
+        fprintf(stderr, "Can not open remote file %s\n", filename);
         return -1;
     }
 
@@ -214,12 +214,12 @@ int main(int argc, char** argv) {
         fscanf(stdin, "%10s", cmd);
         if (strcmp(cmd, "get") == 0) {
             if (get_file(sftp) != 0) {
-                fprintf(stderr, "%s", ssh_get_error());
+                fprintf(stderr, "%s\n", ssh_get_error());
                 break;
             }
         } else if (strcmp(cmd, "put") == 0) {
             if (put_file(sftp) != 0) {
-                fprintf(stderr, "%s", ssh_get_error());
+                fprintf(stderr, "%s\n", ssh_get_error());
                 break;
             }
         } else if (strcmp(cmd, "bye") == 0) {

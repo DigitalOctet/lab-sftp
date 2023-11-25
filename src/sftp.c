@@ -291,9 +291,9 @@ sftp_file sftp_open(sftp_session sftp, const char *filename, int flags,
                 sftp_status_free(status);
                 break;
             }
-            LOG_CRITICAL("received status response - error code: %d, "
-                         "error message: %s", 
-                         status->status, status->errormsg);
+            LOG_NOTICE("received status response - error code: %d, "
+                       "error message: %s", 
+                       status->status, status->errormsg);
             ssh_set_error(SSH_FATAL, status->errormsg);
             sftp_status_free(status);
             break;
