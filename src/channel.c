@@ -100,9 +100,49 @@ static int channel_open(ssh_channel channel, const char *type, uint32_t window,
         switch (reply_type) {
             case SSH_MSG_CHANNEL_OPEN_CONFIRMATION:
                 // LAB: insert your code here.
+                rc = ssh_buffer_unpack(session->in_buffer, "dddd", 
+                                       &recipient_channel, 
+                                       &channel->remote_channel,
+                                       &channel->remote_window,
+                                       &channel->remote_maxpacket);
+                if (rc != SSH_OK) {
+                    LOG_ERROR("cannot unpack buffer");
+                    return SSH_ERROR;
+                }
+                if (recipient_channel != channel->local_channel) {
+                    LOG_ERROR(
+                        "channel number in the reply %d does not match with "
+                        "the original %d",
+                        recipient_channel, channel->local_channel);
+                    return SSH_ERROR;
+                }
+                LOG_NOTICE("local channel #%u to remote channel #%u "
+                           "established", 
+                           channel->local_channel, channel->remote_channel);
+                LOG_NOTICE("local window size = %u, remote window size = %u", 
+                           channel->local_window, channel->remote_window);
+                return SSH_OK;
 
             case SSH_MSG_CHANNEL_OPEN_FAILURE:
                 // LAB: insert your code here.
+                rc = ssh_buffer_unpack(session->in_buffer, "dds", 
+                                       &recipient_channel, &reason_code, 
+                                       &description);
+                if (rc != SSH_OK) {
+                    LOG_ERROR("cannot unpack buffer");
+                    return SSH_ERROR;
+                }
+                if (recipient_channel != channel->local_channel) {
+                    LOG_ERROR(
+                        "channel number in the reply %d does not match with "
+                        "the original %d",
+                        recipient_channel, channel->local_channel);
+                    return SSH_ERROR;
+                }
+                LOG_ERROR("channel open failed - reason code: %d, "
+                          "description: %s", reason_code, description);
+                SAFE_FREE(description);
+                return SSH_ERROR;
 
             case SSH_MSG_GLOBAL_REQUEST:
                 /**
@@ -123,9 +163,36 @@ static int channel_open(ssh_channel channel, const char *type, uint32_t window,
                  *
                  */
                 // LAB: insert your code here.
+                rc = ssh_buffer_unpack(session->in_buffer, "Sb", &req, &want);
+                ssh_string_free(req);
+                if (rc != SSH_OK) {
+                    LOG_ERROR("cannot unpack buffer");
+                    return SSH_ERROR;
+                }
+                if (want) {
+                    /**
+                     * We don't support support the request, so we simply 
+                     * responds with SSH_MSG_REQUEST_FAILURE.
+                     */
+                    rc = ssh_buffer_pack(session->out_buffer, "b", 
+                                        SSH_MSG_REQUEST_FAILURE);
+                    if (rc != SSH_OK) {
+                        LOG_ERROR("can not create buffer");
+                        return SSH_ERROR;
+                    }
+                    if (ssh_packet_send(session) != SSH_OK) {
+                        ssh_buffer_reinit(session->out_buffer);
+                        LOG_ERROR("cannot send request reply");
+                        return SSH_ERROR;
+                    }
+                }
+                break;
 
             default:
                 // LAB: insert your code here.
+                /* The other reply types are not supported. */
+                LOG_ERROR("reply type %d is not supported", reply_type);
+                return SSH_ERROR;
 
         }
     }
@@ -380,7 +447,7 @@ int ssh_channel_request_sftp(ssh_channel channel) {
 
 /**
  * @brief Write data to the channel. This function would block until `len` bytes
- * of data are written.
+ * of data are written.LOG_ERROR
  *
  * @param channel
  * @param data
@@ -489,6 +556,13 @@ int ssh_channel_read(ssh_channel channel, void *dest, uint32_t count) {
         if (ssh_buffer_get_len(buf) > 0) {
             /* try to read channel data from static buffer first */
             // LAB: insert your code here.
+            /* data flow: session->in_buffer --> buf --> dest. */
+            uint32_t buf_len = ssh_buffer_get_len(buf);
+            effectivelen = MIN(buf_len, count);
+            ssh_buffer_get_data(buf, dest + nread, effectivelen);
+            nread += effectivelen;
+            count -= effectivelen;
+            LOG_DEBUG("read %d bytes from channel", effectivelen);
 
         } else {
             /* static buffer has insufficient data, read another
@@ -509,21 +583,119 @@ int ssh_channel_read(ssh_channel channel, void *dest, uint32_t count) {
                 case SSH_MSG_CHANNEL_WINDOW_ADJUST:
                     /* window adjust message could happen here */
                     // LAB: insert your code here.
+                    /* Adjust remote window and try receiving packet again. */
+                    ssh_buffer_unpack(session->in_buffer, "d", &bytes_to_add);
+                    LOG_NOTICE("remote window grows: +%d", bytes_to_add);
+                    channel->remote_window += bytes_to_add;
+                    ssh_buffer_reinit(session->in_buffer);
+                    break;
 
                 case SSH_MSG_CHANNEL_DATA:
                     // LAB: insert your code here.
+                    /* Window size is decreased here because client can still
+                       receive a relatively bigger packet when count is small 
+                       and store it to buf.
+                       We don't receive packets larger than window size and 
+                       maximun packet size. A correctly running server 
+                       shouln't send those packets. */
+                    ssh_buffer_unpack(session->in_buffer, "S", &channel_data);
+                    size_t buf_len = ssh_string_len(channel_data);
+                    if (buf_len > channel->local_maxpacket) {
+                        LOG_ERROR("received packet length %lu exceeds maximum "
+                                  "packet length %u",
+                                  buf_len, channel->local_maxpacket);
+                        goto error;
+                    }
+                    if (buf_len > channel->local_window) {
+                        LOG_ERROR("received packet length %lu exceeds "
+                                  "window size %u",
+                                  buf_len, channel->local_window);
+                        goto error;
+                    }
+                    channel->local_window -= buf_len;
+                    rc = ssh_buffer_add_data(buf, 
+                                             ssh_string_data(channel_data), 
+                                             buf_len);
+                    if (rc != 0) {
+                        LOG_ERROR("cannot add data to buf");
+                        goto error;
+                    }
+                    else {
+                        LOG_DEBUG("add %lu bytes to buf", buf_len);
+                    }
+                    ssh_string_free(channel_data);
+                    break;
 
                 case SSH_MSG_CHANNEL_EOF:
                     // LAB: insert your code here.
+                    /* We should return SSH_EOF here. But I found that 
+                       `sftp_packet_read` cannot deal with SSH_EOF correctly
+                       when reading packet length and type. In this case, 
+                       `buffer` is not filled and getting data from it will 
+                       cause a segmentation fault. */
+                    channel->remote_eof = 1;
+                    return SSH_EOF;
 
                 case SSH_MSG_CHANNEL_CLOSE:
                     // LAB: insert your code here.
+                    /* (RFC 4254 5.3) When either party wishes to terminate 
+                       the channel, it sends SSH_MSG_CHANNEL_CLOSE. Upon 
+                       receiving this message, a party MUST send back an 
+                       SSH_MSG_CHANNEL_CLOSE unless it has already sent this 
+                       message for the channel. */
+                    rc = ssh_channel_eof(channel);
+                    if (rc != SSH_OK) {
+                        return rc;
+                    }
+
+                    rc = ssh_buffer_pack(session->out_buffer, "bd", 
+                                         SSH_MSG_CHANNEL_CLOSE,
+                                         channel->remote_channel);
+                    if (rc != SSH_OK) {
+                        ssh_buffer_reinit(session->out_buffer);
+                        LOG_ERROR("can not create buffer");
+                        goto error;
+                    }
+
+                    rc = ssh_packet_send(session);
+                    if (rc != SSH_OK) {
+                        ssh_buffer_reinit(session->out_buffer);
+                        LOG_ERROR("send SSH_MSG_CHANNEL_CLOSE failed");
+                        goto error;
+                    }
+                    return nread;
 
                 case SSH_MSG_CHANNEL_REQUEST:
                     // LAB: insert your code here.
+                    /* Always reply a failure since we don't support any other
+                       requests. */
+                    rc = ssh_buffer_unpack(session->in_buffer, "Sb", 
+                                           &req, &want);
+                    ssh_string_free(req);
+                    if (rc != SSH_OK) {
+                        LOG_ERROR("cannot unpack buffer");
+                        goto error;
+                    }
+                    if (want) {
+                        rc = ssh_buffer_pack(session->out_buffer, "bd", 
+                                             SSH_MSG_CHANNEL_FAILURE, 
+                                             channel->remote_channel);
+                        if (rc != SSH_OK) {
+                            LOG_ERROR("can not create buffer");
+                            return SSH_ERROR;
+                        }
+                        if (ssh_packet_send(session) != SSH_OK) {
+                            ssh_buffer_reinit(session->out_buffer);
+                            LOG_ERROR("cannot send request reply");
+                            return SSH_ERROR;
+                        }
+                    }
+                    break;
 
                 default:
                     // LAB: insert your code here.
+                    LOG_ERROR("message type %d is not supported", type);
+                    goto error;
 
             }
         }

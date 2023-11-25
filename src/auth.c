@@ -81,7 +81,8 @@ void ssh_get_password(char *password) {
         password[i++] = c;
     }
     password[i] = '\0';
-    LOG_DEBUG("\nGet password: %s", password);
+    fprintf(stdout, "\n");
+    LOG_DEBUG("Get password: %s", password);
 
     /*resetting our old STDIN_FILENO*/
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);

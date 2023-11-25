@@ -66,7 +66,7 @@
         struct timeval tv;                                                   \
         gettimeofday(&tv, NULL);                                             \
         time_t t = tv.tv_sec;                                                \
-        char time_buffer[80];                                                \
+        char time_buffer[100];                                               \
         char time_sec[80];                                                   \
         strftime(time_sec, 80, TIME_FORMAT, localtime(&t));                  \
         sprintf(time_buffer, "%s:%ld", time_sec, tv.tv_usec);                 \

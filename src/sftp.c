@@ -237,6 +237,33 @@ sftp_file sftp_open(sftp_session sftp, const char *filename, int flags,
 
     /* pack a new SFTP packet and send it using `sftp_packet_write` */
     // LAB: insert your code here.
+    ssh_string ssh_filename = ssh_string_from_char(filename);
+    if (attr_flags == SSH_FILEXFER_ATTR_PERMISSIONS) {
+        rc = ssh_buffer_pack(buffer, "dSddd", id, ssh_filename, perm_flags, 
+                             attr_flags, mode);
+    }
+    else {
+        LOG_CRITICAL("attrs %u not supported", attr_flags);
+        ssh_set_error(SSH_FATAL, "attribute error");
+        ssh_buffer_free(buffer);
+        ssh_string_free(ssh_filename);
+        return NULL;
+    }
+    ssh_string_free(ssh_filename);
+    if (rc != SSH_OK) {
+        LOG_CRITICAL("can not pack buffer");
+        ssh_set_error(SSH_FATAL, "buffer error");
+        ssh_buffer_free(buffer);
+        return NULL;
+    }
+
+    if (sftp_packet_write(sftp, SSH_FXP_OPEN, buffer) < 0) {
+        LOG_CRITICAL("cannot send open request");
+        ssh_set_error(SSH_FATAL, "open request error");
+        ssh_buffer_free(buffer);
+        return NULL;
+    }
+    ssh_buffer_free(buffer);
 
 
     response = sftp_packet_read(sftp);
@@ -249,12 +276,46 @@ sftp_file sftp_open(sftp_session sftp, const char *filename, int flags,
     switch (response->type) {
         case SSH_FXP_STATUS:
             // LAB: insert your code here.
+            status = sftp_parse_status(response);
+            sftp_packet_free(response);
+            if (!status) {
+                LOG_CRITICAL("cannot parse status");
+                ssh_set_error(SSH_FATAL, "cannot parse status");
+                break;
+            }
+            if (status->id != id) {
+                LOG_CRITICAL("received id %d does not match client id %d",
+                             status->id, id);
+                ssh_set_error(SSH_FATAL, "id mismatch (server: %d client: %d)", 
+                              status->id, id);
+                sftp_status_free(status);
+                break;
+            }
+            LOG_CRITICAL("received status response - error code: %d, "
+                         "error message: %s", 
+                         status->status, status->errormsg);
+            ssh_set_error(SSH_FATAL, status->errormsg);
+            sftp_status_free(status);
+            break;
 
         case SSH_FXP_HANDLE:
             // LAB: insert your code here.
+            handle = sftp_parse_handle(response, id);
+            sftp_packet_free(response);
+            if (!handle) {
+                LOG_CRITICAL("cannot parse handle");
+                ssh_set_error(SSH_FATAL, "cannot parse handle");
+                break;
+            }
+            LOG_NOTICE("remote file opened");
+            return handle;
 
         default:
             // LAB: insert your code here.
+            LOG_CRITICAL("receive unexpected open response");
+            ssh_set_error(SSH_FATAL, "receive unexpected open response");
+            sftp_packet_free(response);
+            break;
 
     }
     return NULL;
@@ -302,6 +363,42 @@ int sftp_close(sftp_file file) {
 
     switch (response->type) {
         // LAB: insert your code here.
+        case SSH_FXP_STATUS:
+            /* (IETF draft on SFTP 6.3) One should note that on some server 
+               platforms even a close can fail. This can happen e.g.  if the 
+               server operating system caches writes, and an error occurs 
+               while flushing cached writes during the close. */
+            status = sftp_parse_status(response);
+            sftp_packet_free(response);
+            if (!status) {
+                LOG_CRITICAL("cannot parse status");
+                ssh_set_error(SSH_FATAL, "cannot parse status");
+                return SSH_ERROR;
+            }
+            if (status->id != id) {
+                LOG_ERROR("received id %d does not match client id %d",
+                          status->id, id);
+                ssh_set_error(SSH_FATAL, "id mismatch (server: %d client: %d)", 
+                              status->id, id);
+                sftp_status_free(status);
+                return SSH_ERROR;
+            }
+
+            LOG_NOTICE("received status response - status code: %d, "
+                       "status message: %s", 
+                       status->status, status->errormsg);
+            rc = status->status == SSH_FX_OK ? SSH_NO_ERROR : SSH_ERROR;
+            sftp_status_free(status);
+            if (rc) {
+                LOG_INFO("remote file closed");
+            }
+            return rc;
+
+        default:
+            LOG_CRITICAL("receive unexpected close response");
+            ssh_set_error(SSH_FATAL, "receive unexpected close response");
+            sftp_packet_free(response);
+            return SSH_ERROR;
 
     }
 }
@@ -353,6 +450,85 @@ int32_t sftp_read(sftp_file file, void *buf, uint32_t count) {
 
     switch (response->type) {
         // LAB: insert your code here.
+        case SSH_FXP_STATUS:
+            status = sftp_parse_status(response);
+            sftp_packet_free(response);
+            if (!status) {
+                LOG_CRITICAL("cannot parse status");
+                ssh_set_error(SSH_FATAL, "cannot parse status");
+                break;
+            }
+
+            if (status->id != id) {
+                LOG_ERROR("received id %d does not match client id %d",
+                          status->id, id);
+                ssh_set_error(SSH_FATAL, "id mismatch (server: %d client: %d)", 
+                              status->id, id);
+                sftp_status_free(status);
+                break;
+            }
+
+            switch (status->status) {
+                case SSH_FX_OK:
+                    LOG_INFO("read 0 byte from remote file");
+                    sftp_status_free(status);
+                    return 0;
+                
+                case SSH_FX_EOF:
+                    LOG_INFO("no more data is available in the file");
+                    file->eof = 1;
+                    sftp_status_free(status);
+                    return 0;
+
+                default:
+                    LOG_CRITICAL("received status response - error code: %d, "
+                                 "error message: %s", 
+                                 status->status, status->errormsg);
+                    ssh_set_error(SSH_FATAL, status->errormsg);
+                    break;
+            }
+            sftp_status_free(status);
+            break;
+
+        case SSH_FXP_DATA:
+            rc = ssh_buffer_unpack(response->payload, "dS", &recv_id, &data);
+            sftp_packet_free(response);
+            if (rc != SSH_OK) {
+                LOG_ERROR("can not parse server response");
+                ssh_set_error(SSH_FATAL, "buffer error");
+                break;
+            }
+
+            if (recv_id != id) {
+                LOG_ERROR("received id %d does not match client id %d",
+                          recv_id, id);
+                ssh_set_error(SSH_FATAL, "id mismatch (server: %d client: %d)", 
+                              recv_id, id);
+                ssh_string_free(data);
+                break;
+            }
+
+            recvlen = ssh_string_len(data);
+            if (recvlen > count) {
+                LOG_ERROR("received too much data");
+                ssh_set_error(SSH_FATAL, "received too much data");
+                ssh_string_free(data);
+                break;
+            }
+
+            memcpy(buf, ssh_string_data(data), recvlen);
+            file->offset += recvlen;
+            if (recvlen < count) {
+                file->eof = 1;
+            }
+            ssh_string_free(data);
+            return recvlen;
+
+        default:
+            LOG_CRITICAL("receive unexpected read response");
+            ssh_set_error(SSH_FATAL, "receive unexpected read response");
+            sftp_packet_free(response);
+            break;
 
     }
     return SSH_ERROR;
@@ -403,6 +579,46 @@ int32_t sftp_write(sftp_file file, const void *buf, uint32_t count) {
 
         switch (response->type) {
             // LAB: insert your code here.
+            case SSH_FXP_STATUS:
+                status = sftp_parse_status(response);
+                sftp_packet_free(response);
+                if (!status) {
+                    LOG_CRITICAL("cannot parse status");
+                    ssh_set_error(SSH_FATAL, "cannot parse status");
+                    break;
+                }
+                if (status->id != id) {
+                    LOG_CRITICAL("received id %d does not match client id %d",
+                            status->id, id);
+                    ssh_set_error(SSH_FATAL, 
+                                  "id mismatch (server: %d client: %d)", 
+                                  status->id, id);
+                    sftp_status_free(status);
+                    break;
+                }
+                switch (status->status) {
+                    case SSH_FX_OK:
+                        LOG_DEBUG("write %d byte to remote file", nwrite);
+                        nleft -= nwrite;
+                        file->offset += nwrite;
+                        sftp_status_free(status);
+                        break;
+                    
+                    default:
+                        LOG_CRITICAL("received status response - "
+                                     "error code: %d, error message: %s", 
+                                    status->status, status->errormsg);
+                        ssh_set_error(SSH_FATAL, status->errormsg);
+                        sftp_status_free(status);
+                        return SSH_ERROR;
+                }
+                break;
+
+            default:
+                LOG_CRITICAL("receive unexpected write response");
+                ssh_set_error(SSH_FATAL, "receive unexpected write response");
+                sftp_packet_free(response);
+                return SSH_ERROR;
 
         }
     }
